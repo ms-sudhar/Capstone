@@ -1,37 +1,40 @@
-# app.py — Final Capstone Version (fixed plotly key error)
+# ===================================================
+# app.py — Final Capstone Version (Auto/Manual Toggle)
+# ===================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
-import shap
 import time
 import os
 import plotly.express as px
 from sklearn.preprocessing import MinMaxScaler
+import shap
 
 # ---------------------------------------------------
 # SECTION 1: INITIAL SETUP
 # ---------------------------------------------------
 st.set_page_config(page_title="Predictive Maintenance Dashboard", layout="wide")
 
-st.title("🚚 Predictive Maintenance System for Delivery & Logistics")
+st.title("Predictive Maintenance System for Delivery & Logistics")
 st.caption("An Edge-AI and IoT-enabled Fleet Health Monitoring Platform")
 
 # ---------------------------------------------------
 # SECTION 2: LOAD MODEL AND DATA
 # ---------------------------------------------------
 if not os.path.exists("model.pkl"):
-    st.error("❌ model.pkl not found. Please train it using train_model.py first.")
+    st.error("model.pkl not found. Please train it using train_model.py first.")
     st.stop()
 
 with open("model.pkl", "rb") as file:
     model = pickle.load(file)
 
-if not os.path.exists("data.csv"):
-    st.error("❌ engine_data.csv not found in project directory.")
+if not os.path.exists("engine_data.csv"):
+    st.error("engine_data.csv not found in project directory.")
     st.stop()
 
-df = pd.read_csv("data.csv")
+df = pd.read_csv("engine_data.csv")
 
 # Columns in dataset
 feature_cols = ['Engine rpm', 'Lub oil pressure', 'Fuel pressure',
@@ -40,7 +43,9 @@ target_col = 'Engine Condition'
 
 # Simulate multiple vehicles if not present
 if 'Vehicle_ID' not in df.columns:
-    df['Vehicle_ID'] = np.random.choice(['Truck_1', 'Truck_2', 'Truck_3', 'Van_1', 'Van_2'], len(df))
+    df['Vehicle_ID'] = np.random.choice(
+        ['Truck_1', 'Truck_2', 'Truck_3', 'Van_1', 'Van_2'], len(df)
+    )
 
 # Scale numeric features
 scaler = MinMaxScaler()
@@ -49,39 +54,42 @@ scaler.fit(df[feature_cols])
 # ---------------------------------------------------
 # SECTION 3: SIDEBAR CONTROLS
 # ---------------------------------------------------
-st.sidebar.header("⚙️ Control Panel")
+st.sidebar.header("⚙ Control Panel")
 mode = st.sidebar.radio("Select Mode", ["Live IoT Simulation", "Manual Input"])
 view_option = st.sidebar.radio("Select View", ["Fleet Overview", "Single Vehicle"])
+update_mode = st.sidebar.radio("Update Mode", ["Auto Update (Live)", "Manual Refresh (Static)"])
 refresh_rate = st.sidebar.slider("Data Refresh Interval (seconds)", 0.5, 3.0, 1.0)
 
 # ---------------------------------------------------
 # SECTION 4: LIVE IOT SIMULATION
 # ---------------------------------------------------
 if mode == "Live IoT Simulation":
+
+    # ---------------------------------------------------
+    # Fleet Overview Mode
+    # ---------------------------------------------------
     if view_option == "Fleet Overview":
         st.subheader("📡 Real-Time Fleet Health Monitoring")
-
         placeholder = st.empty()
-        for i in range(30):  # 30 live updates
-            # Sample actual readings (not scaled)
+
+        def render_fleet_data():
             sampled = df.sample(5).reset_index(drop=True)
             sampled['Vehicle_ID'] = ['Truck_1', 'Truck_2', 'Truck_3', 'Van_1', 'Van_2']
 
-            # Scale features before prediction
+            # Scale and predict
             scaled = scaler.transform(sampled[feature_cols])
             preds = model.predict(scaled)
             probs = model.predict_proba(scaled)[:, 1]
 
-            # Add a small random flip for demo realism (optional)
+            # Add some random flips to mimic real sensor variance
             flip = np.random.choice([0, 1], len(preds), p=[0.9, 0.1])
             preds = np.where(flip == 1, 1 - preds, preds)
 
-            # Map predictions to readable form
-            sampled['Condition'] = np.where(preds == 1, "⚠️ Faulty", "✅ Normal")
+            # Format output
+            sampled['Condition'] = np.where(preds == 1, "⚠ Faulty", "✅ Normal")
             sampled['Confidence'] = np.round(probs, 2)
             fault_rate = (preds.sum() / len(preds)) * 100
 
-            # Update dashboard
             with placeholder.container():
                 col1, col2 = st.columns(2)
 
@@ -89,39 +97,64 @@ if mode == "Live IoT Simulation":
                     st.dataframe(sampled[['Vehicle_ID', 'Condition', 'Confidence']], use_container_width=True)
 
                 with col2:
-                    fig = px.bar(sampled, x='Vehicle_ID', y='Confidence',
-                                 color='Condition', range_y=[0, 1],
-                                 title="Fleet Fault Probability")
-                    st.plotly_chart(fig, use_container_width=True, key=f"fleet_chart_{i}")
+                    fig = px.bar(
+                        sampled, x='Vehicle_ID', y='Confidence',
+                        color='Condition', range_y=[0, 1],
+                        title="Fleet Fault Probability"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
-                st.caption(f"📊 Fault Rate: {fault_rate:.1f}% — Update #{i+1}")
-            time.sleep(refresh_rate)
+                st.caption(f"📊 Fault Rate: {fault_rate:.1f}%")
 
+        # Handle update mode
+        if update_mode == "Auto Update (Live)":
+            st.info("⏱ Live Auto-Update Mode Running...")
+            for i in range(30):
+                render_fleet_data()
+                time.sleep(refresh_rate)
+        else:
+            if st.button("🔄 Refresh Fleet Data"):
+                render_fleet_data()
+            else:
+                st.info("Click 'Refresh Fleet Data' to manually update the dashboard.")
+
+    # ---------------------------------------------------
+    # Single Vehicle Mode
+    # ---------------------------------------------------
     else:
-        # SINGLE VEHICLE MONITORING
         st.subheader("🚛 Single Vehicle Live Stream")
         vehicle = st.selectbox("Select Vehicle", df['Vehicle_ID'].unique())
         placeholder = st.empty()
 
-        for i in range(30):
+        def render_single_vehicle():
             sample = df[df['Vehicle_ID'] == vehicle].sample(1)
             scaled = scaler.transform(sample[feature_cols])
             pred = model.predict(scaled)[0]
             prob = model.predict_proba(scaled)[:, 1][0]
-            condition = "⚠️ Faulty" if pred == 1 else "✅ Normal"
+            condition = "⚠ Faulty" if pred == 1 else "✅ Normal"
 
             with placeholder.container():
-                st.metric(label="Vehicle", value=vehicle)
-                st.metric(label="Condition", value=condition)
-                st.metric(label="Fault Probability", value=f"{prob*100:.2f}%")
+                col1, col2, col3 = st.columns(3)
+                col1.metric(label="Vehicle", value=vehicle)
+                col2.metric(label="Condition", value=condition)
+                col3.metric(label="Fault Probability", value=f"{prob*100:.2f}%")
 
-            time.sleep(refresh_rate)
+        if update_mode == "Auto Update (Live)":
+            st.info("⏱ Live Auto-Update Mode Running...")
+            for i in range(30):
+                render_single_vehicle()
+                time.sleep(refresh_rate)
+        else:
+            if st.button("🔄 Refresh Vehicle Data"):
+                render_single_vehicle()
+            else:
+                st.info("Click 'Refresh Vehicle Data' to manually check the latest status.")
 
 # ---------------------------------------------------
 # SECTION 5: MANUAL INPUT MODE
 # ---------------------------------------------------
 if mode == "Manual Input":
-    st.subheader("🧠 Predict Engine Condition (Manual Mode)")
+    st.subheader("🧮 Predict Engine Condition (Manual Mode)")
     col1, col2, col3 = st.columns(3)
 
     with col1:
@@ -141,11 +174,11 @@ if mode == "Manual Input":
     if st.button("Predict Engine Condition"):
         pred = model.predict(scaled_input)[0]
         prob = model.predict_proba(scaled_input)[:, 1][0]
-        condition = "⚠️ Faulty" if pred == 1 else "✅ Normal"
+        condition = "⚠ Faulty" if pred == 1 else "✅ Normal"
 
         st.success(f"Prediction: {condition} (Confidence: {prob*100:.2f}%)")
 
-        # Explainable AI
+        # Explainable AI Visualization
         st.markdown("### 🔍 Feature Contribution (Explainable AI)")
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(pd.DataFrame(scaled_input, columns=feature_cols))
@@ -153,7 +186,7 @@ if mode == "Manual Input":
         shap_df = shap_df.sort_values('Impact', ascending=False)
         fig = px.bar(shap_df, x='Impact', y='Feature', orientation='h',
                      title="Feature Influence on Prediction")
-        st.plotly_chart(fig, use_container_width=True, key="shap_explain_chart")
+        st.plotly_chart(fig, use_container_width=True)
 
 # ---------------------------------------------------
 # SECTION 6: FLEET ANALYTICS
